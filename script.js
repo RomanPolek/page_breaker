@@ -51,31 +51,34 @@ function page_breaker_init_gl(canvas, pixel_data) {
 
     //init programs
     page_breaker_init_program(
-    '#version 300 es\n' +
-    'in vec2 vertices;' +
-    'in vec3 colors;' +
-    'uniform mat4 matrix;' +
-    'uniform vec3 position[512];' +
-    'uniform vec2 scale[512];' +
-    'uniform float rotation[512];' +
-    'uniform vec4 colorOffset[512];' +
-    'out lowp vec4 offsetColor;' +
-    'out lowp vec3 trueColor;' +
-    'void main(void) {' +
-        'vec2 p = vec2(vertices.x * scale[gl_InstanceID].x, vertices.y * scale[gl_InstanceID].y);' + 
-        'trueColor = colors;' +
-        'offsetColor = colorOffset[gl_InstanceID];' +
-        'gl_Position = vec4(p.x * cos(rotation[gl_InstanceID]) + p.y * sin(rotation[gl_InstanceID]) + position[gl_InstanceID].x, p.y * cos(rotation[gl_InstanceID]) - p.x * sin(rotation[gl_InstanceID]) + position[gl_InstanceID].y, position[gl_InstanceID].z, 1.0) * matrix;' +
-    '}',
+        '#version 300 es\n' +
+        'in vec2 vertices;' +
+        'in vec3 colors;' +
+        'uniform mat4 matrix;' +
+        'uniform vec3 position[512];' +
+        'uniform vec2 scale[512];' +
+        'uniform float rotation[512];' +
+        'uniform vec4 colorOffset[512];' +
+        'out lowp vec4 offsetColor;' +
+        'out lowp vec3 trueColor;' +
+        'void main(void) {' +
+            'vec2 p = vec2(vertices.x * scale[gl_InstanceID].x, vertices.y * scale[gl_InstanceID].y);' + 
+            'trueColor = colors;' +
+            'offsetColor = colorOffset[gl_InstanceID];' +
+            'gl_Position = vec4(p.x * cos(rotation[gl_InstanceID]) + p.y * sin(rotation[gl_InstanceID]) + position[gl_InstanceID].x, p.y * cos(rotation[gl_InstanceID]) - p.x * sin(rotation[gl_InstanceID]) + position[gl_InstanceID].y, position[gl_InstanceID].z, 1.0) * matrix;' +
+        '}',
 
-    '#version 300 es\n' +
-    'in lowp vec4 offsetColor;' +
-    'in lowp vec3 trueColor;' +
-    'out lowp vec4 outputColor;' +
-    'void main(void) {' +
-        ' outputColor = vec4(trueColor.x + offsetColor.x, trueColor.y + offsetColor.y, trueColor.z + offsetColor.z, offsetColor.w);' +
-    '}'
+        '#version 300 es\n' +
+        'in lowp vec4 offsetColor;' +
+        'in lowp vec3 trueColor;' +
+        'out lowp vec4 outputColor;' +
+        'void main(void) {' +
+            ' outputColor = vec4(trueColor.x + offsetColor.x, trueColor.y + offsetColor.y, trueColor.z + offsetColor.z, offsetColor.w);' +
+        '}'
     )
+
+    //prepare textures
+    //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, gl.canvas);
 }
 
 function break_page() {
