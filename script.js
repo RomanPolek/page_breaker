@@ -1,6 +1,6 @@
 gl = null
 gl_canvas = null
-
+program_display_texture = null
 function page_breaker_resize() {
     if(gl_canvas != null) {
         gl_canvas.width = window.innerWidth
@@ -40,6 +40,11 @@ function page_breaker_init_program(vertex_code, fragment_code) {
     return shader_program
 }
 
+function execute_program(program) {
+    gl.useProgram(program)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+}
+
 function page_breaker_init_gl(canvas, pixel_data) {
     //create context
     gl = canvas.getContext("webgl2")
@@ -50,35 +55,32 @@ function page_breaker_init_gl(canvas, pixel_data) {
     gl.clear(gl.COLOR_BUFFER_BIT)
 
     //init programs
-    page_breaker_init_program(
+    program_display_texture = page_breaker_init_program(
         '#version 300 es\n' +
-        'in vec2 vertices;' +
-        'in vec3 colors;' +
-        'uniform mat4 matrix;' +
-        'uniform vec3 position[512];' +
-        'uniform vec2 scale[512];' +
-        'uniform float rotation[512];' +
-        'uniform vec4 colorOffset[512];' +
-        'out lowp vec4 offsetColor;' +
-        'out lowp vec3 trueColor;' +
+        'out vec2 uv;' +
         'void main(void) {' +
-            'vec2 p = vec2(vertices.x * scale[gl_InstanceID].x, vertices.y * scale[gl_InstanceID].y);' + 
-            'trueColor = colors;' +
-            'offsetColor = colorOffset[gl_InstanceID];' +
-            'gl_Position = vec4(p.x * cos(rotation[gl_InstanceID]) + p.y * sin(rotation[gl_InstanceID]) + position[gl_InstanceID].x, p.y * cos(rotation[gl_InstanceID]) - p.x * sin(rotation[gl_InstanceID]) + position[gl_InstanceID].y, position[gl_InstanceID].z, 1.0) * matrix;' +
+            'vec2 vertices[3]=vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1, 3));' +
+            'gl_Position = vec4(vertices[gl_VertexID],0,1);' +
+            'uv = 0.5 * gl_Position.xy + vec2(0.5);' +
         '}',
 
         '#version 300 es\n' +
-        'in lowp vec4 offsetColor;' +
-        'in lowp vec3 trueColor;' +
-        'out lowp vec4 outputColor;' +
+        'in mediump vec2 uv;' +
+        'out mediump vec4 output_color;' +
         'void main(void) {' +
-            ' outputColor = vec4(trueColor.x + offsetColor.x, trueColor.y + offsetColor.y, trueColor.z + offsetColor.z, offsetColor.w);' +
+            ' output_color = vec4(uv.x / 3.0,mod(uv.y * uv.x * uv.y, 0.1),mod(uv.x * -uv.y * (uv.y - 10.0), 0.3),1);' +
         '}'
     )
 
     //prepare textures
-    //gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, gl.canvas);
+    texture_pixel_data = gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGBA, gl.UNSIGNED_BYTE, pixel_data);
+}
+
+function page_breaker_update() {
+    gl.clear(gl.COLOR_BUFFER_BIT)
+
+    execute_program(program_display_texture)
+    requestAnimationFrame(page_breaker_update)
 }
 
 function break_page() {
@@ -131,6 +133,7 @@ function break_page() {
         canvas.id="page_breaker_canvas"
         overlay.appendChild(canvas)
         page_breaker_init_gl(canvas, pixel_data)
+        requestAnimationFrame(page_breaker_update)
     })
 
 }
