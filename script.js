@@ -1,6 +1,88 @@
-gl = null
-gl_canvas = null
-program_display_texture = null
+var gl = null
+var gl_canvas = null
+var program_display_texture = null
+var data_textures = [null, null]
+
+function page_breaker_view_texture(width, height, texture) {
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+
+
+    var fb = gl.createFramebuffer()
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb)
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0)
+    var buffer = new Uint8Array(width * height * 4)
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, buffer)
+    console.log(buffer)
+    var view_texture_canvas = document.getElementById("page_breaker_view_texture_canvas")
+    if(view_texture_canvas == null) {
+        view_texture_canvas = document.createElement("canvas")
+        view_texture_canvas.id = "page_breaker_view_texture_canvas"
+        view_texture_canvas.width = width
+        view_texture_canvas.height = height
+        view_texture_canvas.style.width = "512px"
+        view_texture_canvas.style.height = "512px"
+        view_texture_canvas.style.position = "fixed"
+        view_texture_canvas.style.top = "50%"
+        view_texture_canvas.style.left = "50%"
+        view_texture_canvas.style.transform = "translate(-50%, -50%)"
+        view_texture_canvas.style.zIndex = "999999"
+        view_texture_canvas.style.backgroundColor = "black"
+        view_texture_canvas.style.cursor = "pointer"
+        view_texture_canvas.onclick = function() {
+            this.remove()
+        }.bind(view_texture_canvas)
+
+        document.getElementById("page_breaker_overlay").appendChild(view_texture_canvas)
+    }
+    var context = view_texture_canvas.getContext("2d")
+    context.clearRect(0, 0, view_texture_canvas.width, view_texture_canvas.height)
+    var image_data = context.createImageData(width, height)
+    for(var i = 0; i < buffer.length; i++) {
+        image_data.data[i] = buffer[i]
+    }
+    context.putImageData(image_data, 0, 0)
+
+    gl.bindTexture(gl.TEXTURE_2D, null)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+}
+
+function page_breaker_create_texture() {
+    var texture = gl.createTexture()
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+    const pixel = new Uint8Array([0, 0, 255, 255])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+    gl.bindTexture(gl.TEXTURE_2D, null)
+    return texture
+}
+
+function page_breaker_init_data_textures() {
+    data_textures = [page_breaker_create_texture(), page_breaker_create_texture()]
+
+    var width = Math.round(window.innerWidth)
+    var height = Math.round(window.innerHeight / 2 * 3)
+
+    console.log(width)
+    console.log(height)
+
+    gl.bindTexture(gl.TEXTURE_2D, data_textures[1])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+
+
+    gl.bindTexture(gl.TEXTURE_2D, null)
+
+
+
+    //TESTING
+    gl.bindTexture(gl.TEXTURE_2D, data_textures[0])
+    const pixel = new Uint8Array([0, 255, 0, 255])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel)
+    page_breaker_view_texture(10,10,data_textures[0])
+    
+}
+
 function page_breaker_resize() {
     if(gl_canvas != null) {
         gl_canvas.width = window.innerWidth
@@ -73,7 +155,7 @@ function page_breaker_init_gl(canvas, pixel_data) {
     )
 
     //prepare textures
-    texture_pixel_data = gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGBA, gl.UNSIGNED_BYTE, pixel_data);
+    page_breaker_init_data_textures()
 }
 
 function page_breaker_update() {
