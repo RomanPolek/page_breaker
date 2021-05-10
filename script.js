@@ -7,7 +7,8 @@ var position_textures = [null, null] //RGBA32F format and contains X,Y, VX, VY
 var framebuffers = [null, null] //both sets of textures are bound to these
 var old_state = 0
 var new_state = 1
-var uniform_render_texture = -1
+var uniform_render_color = -1
+var uniform_render_position = -1
 var uniform_color = -1
 var uniform_position = -1
 var scaling_factor = 1 //is a natural number. 1 is maximum quality
@@ -39,16 +40,29 @@ function page_breaker_load_initial_state(initial_data) {
         }
     }
 
-    gl.bindTexture(gl.TEXTURE_2D, color_textures[0])
+    gl.bindTexture(gl.TEXTURE_2D, color_textures[old_state])
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, new_image_data)
-    gl.bindTexture(gl.TEXTURE_2D, color_textures[1])
+    gl.bindTexture(gl.TEXTURE_2D, color_textures[new_state])
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
 
     //at the same time set the position textures to the same size
-    gl.bindTexture(gl.TEXTURE_2D, position_textures[0])
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
-    gl.bindTexture(gl.TEXTURE_2D, position_textures[1])
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    //generate the initial positions from 0,0 to 1,1
+    //it also contains the velocities
+    var initial_positions = new Float32Array(width * height * 4)
+    for(var y = 0; y < height; y++) {
+        for(var x = 0; x < width; x++) {
+            var index = (y * width + x) * 4
+            initial_positions[index + 0] = x / width //X coord
+            initial_positions[index + 1] = y / height //Y coord
+            initial_positions[index + 2] = 0 //VX
+            initial_positions[index + 3] = 0 //VY
+        }
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, position_textures[old_state])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, new Uint32Array(initial_positions.buffer))
+    gl.bindTexture(gl.TEXTURE_2D, position_textures[new_state])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, null)
 
     gl.bindTexture(gl.TEXTURE_2D, null)
 }
@@ -159,9 +173,11 @@ function page_breaker_init_gl(canvas, pixel_data) {
         '#version 300 es\n' +
         'in highp vec2 uv;' +
         'out highp vec4 out_color;' +
-        'uniform sampler2D render_texture;' +
+        'uniform sampler2D render_color;' +
+        'uniform highp usampler2D render_position;' +
         'void main(void) {' +
-            'out_color = texture(render_texture, uv);' +
+            'highp vec2 pos = uintBitsToFloat(texture(render_position, uv).xy);' +
+            'out_color = texture(render_color, uv);' +
         '}'
     )
 
@@ -179,18 +195,19 @@ function page_breaker_init_gl(canvas, pixel_data) {
         //FRAGMENT SHADER
         '#version 300 es\n' +
         'in highp vec2 uv;' +
+        'uniform sampler2D old_color;' +
+        'uniform highp usampler2D old_position;' +
         'layout(location = 0) out highp vec4 new_color;' +
         'layout(location = 1) out highp vec4 new_position;' +
-        'uniform sampler2D old_color;' +
-        'uniform sampler2D old_position;' +
         'void main(void) {' +
-            'new_color = texture(old_color, uv + vec2(0,0.001));' +
-            'new_position = vec4(0.0, 0.0, 0.0, 0.0);' +
+            'new_color = texture(old_color, uv);' +
+            'new_position = vec4(1, 0.0, 0.0, 0.0);' +
         '}'
     )
 
     //get uniform locations
-    uniform_render_texture = gl.getUniformLocation(program_display, "render_texture")
+    uniform_render_color = gl.getUniformLocation(program_display, "render_color")
+    uniform_render_position = gl.getUniformLocation(program_display, "render_position")
     uniform_color = gl.getUniformLocation(program_compute, "old_color")
     uniform_position = gl.getUniformLocation(program_compute, "old_position")
 
@@ -220,7 +237,8 @@ function page_breaker_update() {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     gl.viewport(0, 0, gl_canvas.width, gl_canvas.height)
     gl.useProgram(program_display)
-    gl.uniform1i(uniform_render_texture, new_state)
+    gl.uniform1i(uniform_render_color, new_state)
+    gl.uniform1i(uniform_render_position, new_state + 2)
     execute_program() //render to screen
 
     swap_states()
@@ -289,7 +307,6 @@ function page_breaker_view_framebuffer(width, height, framebuffer) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)
     var buffer = new Uint8Array(width * height * 4)
     gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, buffer)
-    
     var view_texture_canvas = document.getElementById("page_breaker_view_texture_canvas")
     if(view_texture_canvas == null) {
         view_texture_canvas = document.createElement("canvas")
