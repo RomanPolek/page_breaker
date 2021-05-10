@@ -1,11 +1,15 @@
 var gl = null
 var gl_canvas = null
-var program_display_texture = null
+var program_compute = null
+var program_display = null
 var color_textures = [null, null]
-var position_textures = [null, null]
+var position_textures = [null, null] //RGBA32F format and contains X,Y, VX, VY
 var framebuffers = [null, null] //both sets of textures are bound to these
 var old_state = 0
 var new_state = 1
+var uniform_render_texture = -1
+var uniform_color = -1
+var uniform_position = -1
 
 function swap_states() {
     var x = old_state
@@ -17,12 +21,31 @@ function page_breaker_load_initial_state(initial_data) {
     var context = initial_data.getContext("2d")
     var image_data = context.getImageData(0,0,gl_canvas.width, gl_canvas.height)
 
-    gl.bindTexture(gl.TEXTURE_2D, color_textures[old_state])
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image_data)
-    
+    var width = Math.ceil(gl.canvas.width / 2)
+    var height = Math.ceil(gl.canvas.height / 2)
+
+    //do some alterations to this data
+    var new_image_data = new Uint8ClampedArray(width * height * 4)
+    for(var y = 0; y < height; y++) {
+        for(var x = 0; x < width; x++) {
+            for(var i = 0; i < 4; i++)
+            var index = (y * width + x) * 4 + i
+            new_image_data[index] = image_data.data[index]
+        }
+    }
+    console.log(image_data)
+    console.log(new_image_data)
+
+    gl.bindTexture(gl.TEXTURE_2D, color_textures[0])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, new_image_data)
+    gl.bindTexture(gl.TEXTURE_2D, color_textures[1])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+
     //at the same time set the position textures to the same size
-    gl.bindTexture(gl.TEXTURE_2D, position_textures[old_state])
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl_canvas.width, gl_canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.bindTexture(gl.TEXTURE_2D, position_textures[0])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
+    gl.bindTexture(gl.TEXTURE_2D, position_textures[1])
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
 
     gl.bindTexture(gl.TEXTURE_2D, null)
 }
@@ -64,14 +87,7 @@ function page_breaker_init_data_textures(initial_data) {
     position_textures = [page_breaker_create_texture("position"), page_breaker_create_texture("position")]
     framebuffers = [page_breaker_create_framebuffer(color_textures[0], position_textures[0]), page_breaker_create_framebuffer(color_textures[1], position_textures[1])]
 
-    var width = Math.round(gl_canvas.width)
-    var height = Math.round(gl_canvas.height)
-
     page_breaker_load_initial_state(initial_data)
-
-    //TESTING
-    page_breaker_view_framebuffer(100,100,framebuffers[0])
-    
 }
 
 function page_breaker_resize() {
@@ -113,8 +129,7 @@ function page_breaker_init_program(vertex_code, fragment_code) {
     return shader_program
 }
 
-function execute_program(program) {
-    gl.useProgram(program)
+function execute_program() {
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 }
 
@@ -128,7 +143,8 @@ function page_breaker_init_gl(canvas, pixel_data) {
     gl.clear(gl.COLOR_BUFFER_BIT)
 
     //init programs
-    program_display_texture = page_breaker_init_program(
+    program_display = page_breaker_init_program(
+        //VERTEX SHADER
         '#version 300 es\n' +
         'out vec2 uv;' +
         'void main(void) {' +
@@ -137,22 +153,76 @@ function page_breaker_init_gl(canvas, pixel_data) {
             'uv = 0.5 * gl_Position.xy + vec2(0.5);' +
         '}',
 
+        
+        //FRAGMENT SHADER
         '#version 300 es\n' +
         'in mediump vec2 uv;' +
-        'out mediump vec4 output_color;' +
+        'out mediump vec4 out_color;' +
+        'uniform sampler2D render_texture;' +
         'void main(void) {' +
-            ' output_color = vec4(uv.x / 3.0,mod(uv.y * uv.x * uv.y, 0.1),mod(uv.x * -uv.y * (uv.y - 10.0), 0.3),1);' +
+            'out_color = texture(render_texture, uv);' +
         '}'
     )
 
+    program_compute = page_breaker_init_program(
+        //VERTEX SHADER
+        '#version 300 es\n' +
+        'out vec2 uv;' +
+        'void main(void) {' +
+            'vec2 vertices[3]=vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1, 3));' +
+            'gl_Position = vec4(vertices[gl_VertexID],0,1);' +
+            'uv = 0.5 * gl_Position.xy + vec2(0.5);' +
+        '}',
+
+
+        //FRAGMENT SHADER
+        '#version 300 es\n' +
+        'in mediump vec2 uv;' +
+        'layout(location = 0) out mediump vec4 new_color;' +
+        'layout(location = 1) out mediump vec4 new_position;' +
+        'uniform sampler2D old_color;' +
+        'uniform sampler2D old_position;' +
+        'void main(void) {' +
+            'new_color = texture(old_color, uv);' +
+            'new_position = vec4(0.0, 0.0, 0.0, 0.0);' +
+        '}'
+    )
+
+    //get uniform locations
+    uniform_render_texture = gl.getUniformLocation(program_display, "render_texture")
+    uniform_color = gl.getUniformLocation(program_compute, "old_color")
+    uniform_position = gl.getUniformLocation(program_compute, "old_position")
+
     //prepare textures
     page_breaker_init_data_textures(pixel_data)
+
+    //bind textures to units
+    gl.activeTexture(gl.TEXTURE0)
+    gl.bindTexture(gl.TEXTURE_2D, color_textures[0])
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, color_textures[1])
+    gl.activeTexture(gl.TEXTURE2)
+    gl.bindTexture(gl.TEXTURE_2D, position_textures[0])
+    gl.activeTexture(gl.TEXTURE3)
+    gl.bindTexture(gl.TEXTURE_2D, position_textures[1])
 }
 
 function page_breaker_update() {
-    gl.clear(gl.COLOR_BUFFER_BIT)
+    
+    //write uniforms
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[new_state])
+    gl.useProgram(program_compute)
+    gl.uniform1i(uniform_color, old_state)
+    gl.uniform1i(uniform_position, old_state + 2)
+    execute_program()
 
-    execute_program(program_display_texture)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.useProgram(program_display)
+    gl.uniform1i(uniform_render_texture, new_state)
+    execute_program() //render to screen
+
+    swap_states()
+
     requestAnimationFrame(page_breaker_update)
 }
 
