@@ -5,10 +5,14 @@ function page_breaker_resize() {
     if(canvas != null) {
         canvas.width = window.innerWidth
         canvas.height = window.innerHeight
+        canvas.style.width = window.innerWidth + "px"
+        canvas.style.height = window.innerHeight + "px"
     }
 }
 
 function page_breaker_update() {
+    context = canvas.getContext("2d")
+    context.fillRect(0,0,100,100)
 
 }
 
@@ -53,9 +57,9 @@ function break_page() {
     }
 
 
-    var canvas = document.getElementById("page_breaker_canvas")
-    if(canvas != null) {
-        canvas.remove()
+    var c = document.getElementById("page_breaker_canvas")
+    if(c != null) {
+        c.remove()
     }
     
     html2canvas(document.body).then((initial_data_canvas) => {
