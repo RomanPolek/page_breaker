@@ -1,19 +1,76 @@
 var canvas = null
 var context = null
 
+var color_state = null //is static
+var output_color_state = null
+var output_index_state = null
+var new_color_state = null
+var old_position_state = null
+var new_position_state = null
+
+var width = 0
+var height = 0
+
+function page_breaker_swap() {    
+    temp = old_position_state
+    old_position_state = new_position_state
+    new_position_state = temp
+}
+
 function page_breaker_resize() {
     if(canvas != null) {
-        canvas.width = window.innerWidth
-        canvas.height = window.innerHeight
         canvas.style.width = window.innerWidth + "px"
         canvas.style.height = window.innerHeight + "px"
+
+        width = window.innerWidth
+        height = window.innerHeight
+        var array_size = width * height * 4
+
+        canvas.width = width
+        canvas.height = height
+
+        color_state = new Uint8ClampedArray(array_size)
+        output_color_state = new Uint8ClampedArray(array_size)
+        output_index_state = new Uint32Array(array_size / 4) //only 1 channel
+        old_position_state = new Float32Array(array_size)
+        new_position_state = new Float32Array(array_size)
+
+        for(var y = 0; y < width; y++) {
+            for(var x = 0; x < height; x++) {
+                var index = (y * width + x) * 4
+                old_position_state[index + 0] = y / width
+                old_position_state[index + 1] = x / height
+                old_position_state[index + 2] = 0
+                old_position_state[index + 3] = 0
+            }
+        }
     }
 }
 
 function page_breaker_update() {
-    context = canvas.getContext("2d")
-    context.fillRect(0,0,100,100)
 
+    for(var y = 0; y < width; y++) {
+        for(var x = 0; x < height; x++) {
+            var index = (y * width + x) * 4
+            
+            var position_x = old_position_state[index + 0]
+            var position_y = old_position_state[index + 1]
+
+
+            var output_index = (Math.round(position_y) * width + Math.round(position_x)) * 4
+            output_color_state[output_index + 0] = color_state[index + 0]
+            output_color_state[output_index + 1] = color_state[index + 1]
+            output_color_state[output_index + 2] = color_state[index + 2]
+            output_color_state[output_index + 3] = color_state[index + 3]
+            output_index_state[output_index] = index
+        }
+    }
+    
+
+    //write output index state
+    context.putImageData(new ImageData(output_color_state, width, height), 0, 0)
+    page_breaker_swap()
+    requestAnimationFrame(page_breaker_update)
 }
 
 
@@ -65,10 +122,30 @@ function break_page() {
     html2canvas(document.body).then((initial_data_canvas) => {
         canvas = initial_data_canvas
         canvas.id="page_breaker_canvas"
+        context = canvas.getContext("2d")
+        context.imageSmoothingEnabled = false
+        context.mozImageSmoothingEnabled = false
+        context.oImageSmoothingEnabled = false
+        context.webkitImageSmoothingEnabled = false
+        context.msImageSmoothingEnabled = false
+
         overlay.appendChild(canvas)
+        //copy initial data to the buffers
+        var initial_data = context.getImageData(0, 0, window.innerWidth, window.innerHeight).data
+        page_breaker_resize()
+        for(var y = 0; y < window.innerHeight; y++) {
+            for(var x = 0; x < window.innerWidth; x++) {
+                var index = (y * window.innerWidth + x) * 4
+                color_state[index + 0] = initial_data[index + 0]
+                color_state[index + 1] = initial_data[index + 1]
+                color_state[index + 2] = initial_data[index + 2]
+                color_state[index + 3] = initial_data[index + 3]
+            }
+        }
         requestAnimationFrame(page_breaker_update)
     })
 
 }
 
 window.addEventListener("resize", page_breaker_resize)
+old_state = new ImageData(window.innerWidth, window.innerHeight)
