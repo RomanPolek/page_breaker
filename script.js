@@ -11,6 +11,7 @@ var uniform_render_color = -1
 var uniform_render_position = -1
 var uniform_render_width = -1
 var uniform_render_height = -1
+var uniform_render_scaling_factor = -1
 var uniform_color = -1
 var uniform_position = -1
 var scaling_factor = 1 //is a natural number. 1 is maximum quality
@@ -163,13 +164,14 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'uniform highp usampler2D render_position;' +
         'uniform highp float render_width;' +
         'uniform highp float render_height;' +
+        'uniform highp uint render_scaling_factor;' +
         'void main(void) {' +
             'highp vec2 uv = vec2(mod(float(gl_VertexID), render_width), float(gl_VertexID) / render_width);' +
             'uv /= vec2(render_width, render_height);' +
             'highp vec2 pos = uintBitsToFloat(texture(render_position, uv).xy);' +
             'color = texture(render_color, uv);' +
-            'gl_Position = vec4(uv * 2.0 - 1.0, 0, 1);' +
-            'gl_PointSize = 1.0;'+
+            'gl_Position = vec4(pos * 2.0 - 1.0, 0, 1);' +
+            'gl_PointSize = float(render_scaling_factor);'+
         '}',
 
         
@@ -200,9 +202,13 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'uniform highp usampler2D old_position;' +
         'layout(location = 0) out highp vec4 new_color;' +
         'layout(location = 1) out highp vec4 new_position;' +
+
+        'const highp float gravity = 2.0 / 60000.0;' +
+
         'void main(void) {' +
-            'new_color = texture(old_color, uv - vec2(0,-0.001));' +
-            'new_position = vec4(1, 0.0, 0.0, 0.0);' +
+            'new_color = texture(old_color, uv);' +
+            'highp vec4 old_pos = uintBitsToFloat(texture(old_position, uv));' +
+            'new_position = old_pos + vec4(old_pos.z, old_pos.w,0,-gravity);' +
         '}'
     )
 
@@ -211,6 +217,7 @@ function page_breaker_init_gl(canvas, pixel_data) {
     uniform_render_position = gl.getUniformLocation(program_display, "render_position")
     uniform_render_width = gl.getUniformLocation(program_display, "render_width")
     uniform_render_height = gl.getUniformLocation(program_display, "render_height")
+    uniform_render_scaling_factor = gl.getUniformLocation(program_display, "render_scaling_factor")
     uniform_color = gl.getUniformLocation(program_compute, "old_color")
     uniform_position = gl.getUniformLocation(program_compute, "old_position")
 
@@ -244,6 +251,7 @@ function page_breaker_update() {
     gl.uniform1i(uniform_render_position, new_state + 2)
     gl.uniform1f(uniform_render_width, width)
     gl.uniform1f(uniform_render_height, height)
+    gl.uniform1ui(uniform_render_scaling_factor, scaling_factor)
     gl.drawArrays(gl.POINTS, 0, width * height)
 
     swap_states()
@@ -263,7 +271,7 @@ function break_page() {
         overlay.style.top = "0px"
         overlay.style.left = "0px"
         overlay.style.zIndex= "999"
-        
+        overlay.style.backgroundColor = "rgb(220,220,220)"
 
         //create close button
         var close_button = document.createElement("p")
