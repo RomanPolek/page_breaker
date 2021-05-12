@@ -9,6 +9,8 @@ var old_state = 0
 var new_state = 1
 var uniform_render_color = -1
 var uniform_render_position = -1
+var uniform_render_width = -1
+var uniform_render_height = -1
 var uniform_color = -1
 var uniform_position = -1
 var scaling_factor = 1 //is a natural number. 1 is maximum quality
@@ -144,10 +146,6 @@ function page_breaker_init_program(vertex_code, fragment_code) {
     return shader_program
 }
 
-function execute_program() {
-    gl.drawArrays(gl.TRIANGLES, 0, 3)
-}
-
 function page_breaker_init_gl(canvas, pixel_data) {
     //create context
     gl = canvas.getContext("webgl2")
@@ -156,28 +154,31 @@ function page_breaker_init_gl(canvas, pixel_data) {
     page_breaker_resize()
     gl.clearColor(0.8, 0.9, 1.0, 1.0)
     gl.clear(gl.COLOR_BUFFER_BIT)
-
     //init programs
     program_display = page_breaker_init_program(
         //VERTEX SHADER
         '#version 300 es\n' +
-        'out vec2 uv;' +
+        'out vec4 color;' +
+        'uniform sampler2D render_color;' +
+        'uniform highp usampler2D render_position;' +
+        'uniform highp float render_width;' +
+        'uniform highp float render_height;' +
         'void main(void) {' +
-            'vec2 vertices[3]=vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1, 3));' +
-            'gl_Position = vec4(vertices[gl_VertexID],0,1);' +
-            'uv = 0.5 * gl_Position.xy + vec2(0.5);' +
+            'highp vec2 uv = vec2(mod(float(gl_VertexID), render_width), float(gl_VertexID) / render_width);' +
+            'uv /= vec2(render_width, render_height);' +
+            'highp vec2 pos = uintBitsToFloat(texture(render_position, uv).xy);' +
+            'color = texture(render_color, uv);' +
+            'gl_Position = vec4(uv * 2.0 - 1.0, 0, 1);' +
+            'gl_PointSize = 1.0;'+
         '}',
 
         
         //FRAGMENT SHADER
         '#version 300 es\n' +
-        'in highp vec2 uv;' +
         'out highp vec4 out_color;' +
-        'uniform sampler2D render_color;' +
-        'uniform highp usampler2D render_position;' +
+        'in highp vec4 color;' +
         'void main(void) {' +
-            'highp vec2 pos = uintBitsToFloat(texture(render_position, uv).xy);' +
-            'out_color = texture(render_color, uv);' +
+            'out_color = color;' +
         '}'
     )
 
@@ -200,7 +201,7 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'layout(location = 0) out highp vec4 new_color;' +
         'layout(location = 1) out highp vec4 new_position;' +
         'void main(void) {' +
-            'new_color = texture(old_color, uv);' +
+            'new_color = texture(old_color, uv - vec2(0,-0.001));' +
             'new_position = vec4(1, 0.0, 0.0, 0.0);' +
         '}'
     )
@@ -208,6 +209,8 @@ function page_breaker_init_gl(canvas, pixel_data) {
     //get uniform locations
     uniform_render_color = gl.getUniformLocation(program_display, "render_color")
     uniform_render_position = gl.getUniformLocation(program_display, "render_position")
+    uniform_render_width = gl.getUniformLocation(program_display, "render_width")
+    uniform_render_height = gl.getUniformLocation(program_display, "render_height")
     uniform_color = gl.getUniformLocation(program_compute, "old_color")
     uniform_position = gl.getUniformLocation(program_compute, "old_position")
 
@@ -232,14 +235,16 @@ function page_breaker_update() {
     gl.useProgram(program_compute)
     gl.uniform1i(uniform_color, old_state)
     gl.uniform1i(uniform_position, old_state + 2)
-    execute_program()
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     gl.viewport(0, 0, gl_canvas.width, gl_canvas.height)
     gl.useProgram(program_display)
     gl.uniform1i(uniform_render_color, new_state)
     gl.uniform1i(uniform_render_position, new_state + 2)
-    execute_program() //render to screen
+    gl.uniform1f(uniform_render_width, width)
+    gl.uniform1f(uniform_render_height, height)
+    gl.drawArrays(gl.POINTS, 0, width * height)
 
     swap_states()
 
