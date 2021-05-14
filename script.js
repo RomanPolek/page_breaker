@@ -1,22 +1,28 @@
+var running = false
 var gl = null
 var gl_canvas = null
 var program_compute = null
+var program_output = null
 var program_display = null
 var color_textures = [null, null]
 var position_textures = [null, null] //RGBA32F format and contains X,Y, VX, VY
+var output_color_texture = null
 var reference_texture = null
 var framebuffers = [null, null] //both sets of textures are bound to these
-var reference_framebuffer = null
+var output_framebuffer = null
+var clear_framebuffer = null
 var old_state = 0
 var new_state = 1
 var uniform_render_color = -1
 var uniform_render_position = -1
 var uniform_render_width = -1
 var uniform_render_height = -1
-var uniform_render_scaling_factor = -1
 var uniform_color = -1
 var uniform_position = -1
 var uniform_delta_time = -1
+var uniform_output_sampler = -1
+var uniform_display_screen_width = -1
+var uniform_reference = -1
 var scaling_factor = 1 //is a natural number. 1 is maximum quality
 var width = 0
 var height = 0
@@ -71,6 +77,9 @@ function page_breaker_load_initial_state(initial_data) {
     gl.bindTexture(gl.TEXTURE_2D, position_textures[new_state])
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, null)
 
+    //init reference textures
+    gl.bindTexture(gl.TEXTURE_2D, output_color_texture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
     gl.bindTexture(gl.TEXTURE_2D, reference_texture)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16UI, width, height, 0, gl.RG_INTEGER, gl.UNSIGNED_SHORT, null)
 
@@ -78,13 +87,14 @@ function page_breaker_load_initial_state(initial_data) {
     gl.bindTexture(gl.TEXTURE_2D, null)
 }
 
-function page_breaker_create_texture(texture_type="color") {
+function page_breaker_create_texture(texture_type="color", filtering="nearest") {
     var texture = gl.createTexture()
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+    var filter = filtering === "nearest"? gl.NEAREST : gl.LINEAR
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter)
     
     var internal_format = gl.RGBA
     var format = gl.RGBA
@@ -101,12 +111,17 @@ function page_breaker_create_texture(texture_type="color") {
     return texture
 }
 
-function page_breaker_create_framebuffer(color_texture, position_texture) {
+function page_breaker_create_framebuffer(color_texture, position_texture = null) {
     var framebuffer = gl.createFramebuffer()
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer)    
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, color_texture, 0)
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, position_texture, 0)
-    gl.drawBuffers([gl.COLOR_ATTACHMENT0,gl.COLOR_ATTACHMENT1])
+    if(position_texture != null) {
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, position_texture, 0)
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0,gl.COLOR_ATTACHMENT1])
+    }
+    else {
+        gl.drawBuffers([gl.COLOR_ATTACHMENT0])
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
     return framebuffer
 }
@@ -116,8 +131,10 @@ function page_breaker_init_data_textures(initial_data) {
     position_textures = [page_breaker_create_texture("position"), page_breaker_create_texture("position")]
     output_color_texture = page_breaker_create_texture("color")
     reference_texture = page_breaker_create_texture("position")
+
     framebuffers = [page_breaker_create_framebuffer(color_textures[0], position_textures[0]), page_breaker_create_framebuffer(color_textures[1], position_textures[1])]
-    reference_framebuffer = page_breaker_create_framebuffer(output_color_texture, reference_texture)
+    output_framebuffer = page_breaker_create_framebuffer(output_color_texture, reference_texture)
+    clear_framebuffer = page_breaker_create_framebuffer(output_color_texture)
 
     page_breaker_load_initial_state(initial_data)
 }
@@ -164,34 +181,62 @@ function page_breaker_init_gl(canvas, pixel_data) {
     gl_canvas = canvas
 
     page_breaker_resize()
-    gl.clearColor(0.8, 0.9, 1.0, 1.0)
+    gl.clearColor(1.0, 1.0, 1.0, 0.0)
     gl.clear(gl.COLOR_BUFFER_BIT)
     //init programs
     program_display = page_breaker_init_program(
         //VERTEX SHADER
         '#version 300 es\n' +
+        'out vec2 uv;' +
+        'void main(void) {' +
+            'vec2 vertices[3]=vec2[3](vec2(-1,-1), vec2(3,-1), vec2(-1, 3));' +
+            'gl_Position = vec4(vertices[gl_VertexID],0,1);' +
+            'uv = 0.5 * gl_Position.xy + vec2(0.5);' +
+        '}',
+
+        //FRAGMENT SHADER
+        '#version 300 es\n' +
+        'in mediump vec2 uv;' +
+        'out mediump vec4 output_color;' +
+        'uniform sampler2D output_sampler;' +
+        'uniform uint display_screen_width;' +
+        'void main(void) {' +
+            'output_color = texture(output_sampler, uv);' +
+            'if(output_color.w == 0.0) {' +
+                'output_color = texture(output_sampler, uv + 1.0/float(display_screen_width));' +
+            '}' +
+        '}'
+    )
+
+
+    program_output = page_breaker_init_program(
+        //VERTEX SHADER
+        '#version 300 es\n' +
         'out vec4 color;' +
+        'out vec2 uv;' +
         'uniform sampler2D render_color;' +
         'uniform highp usampler2D render_position;' +
         'uniform highp float render_width;' +
         'uniform highp float render_height;' +
-        'uniform highp uint render_scaling_factor;' +
         'void main(void) {' +
-            'highp vec2 uv = vec2(mod(float(gl_VertexID), render_width), float(gl_VertexID) / render_width);' +
+            'uv = vec2(mod(float(gl_VertexID), render_width), float(gl_VertexID) / render_width);' +
             'uv /= vec2(render_width, render_height);' +
             'highp vec2 pos = uintBitsToFloat(texture(render_position, uv).xy);' +
             'color = texture(render_color, uv);' +
             'gl_Position = vec4(pos * 2.0 - 1.0, 0, 1);' +
-            'gl_PointSize = float(render_scaling_factor);'+
+            'gl_PointSize = 1.0;'+
         '}',
 
         
         //FRAGMENT SHADER
         '#version 300 es\n' +
-        'out highp vec4 out_color;' +
         'in highp vec4 color;' +
+        'in highp vec2 uv;' +
+        'layout(location = 0) out highp vec4 out_color;' +
+        'layout(location = 1) out highp vec2 reference;' +
         'void main(void) {' +
-            'out_color = color;' +
+            'out_color = vec4(color.xyz, 1);' +
+            'reference = uv;' +
         '}'
     )
 
@@ -211,7 +256,10 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'in highp vec2 uv;' +
         'uniform sampler2D old_color;' +
         'uniform highp usampler2D old_position;' +
+        'uniform highp usampler2D reference;' +
         'uniform highp float delta_time;' +
+        'uniform highp float screen_width;' +
+        'uniform highp float screen_height;' +
         'layout(location = 0) out highp vec4 new_color;' +
         'layout(location = 1) out highp vec4 new_position;' +
 
@@ -223,7 +271,9 @@ function page_breaker_init_gl(canvas, pixel_data) {
             'highp vec4 world_transformation = vec4(SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH, SCENE_HEIGHT);' +
 
             'new_color = texture(old_color, uv);' +
-            'highp vec4 old_pos = uintBitsToFloat(texture(old_position, uv)) * world_transformation;' +
+            'highp vec4 old_pos = uintBitsToFloat(texture(old_position, uv));' +
+            'highp vec2 old_coordinates = old_pos.xy;' +
+            'old_pos *= world_transformation;' +
             
             'highp vec4 change = vec4(0, 0, 0, -GRAVITY);' +
 
@@ -252,14 +302,16 @@ function page_breaker_init_gl(canvas, pixel_data) {
     )
 
     //get uniform locations
-    uniform_render_color = gl.getUniformLocation(program_display, "render_color")
-    uniform_render_position = gl.getUniformLocation(program_display, "render_position")
-    uniform_render_width = gl.getUniformLocation(program_display, "render_width")
-    uniform_render_height = gl.getUniformLocation(program_display, "render_height")
-    uniform_render_scaling_factor = gl.getUniformLocation(program_display, "render_scaling_factor")
+    uniform_display_screen_width = gl.getUniformLocation(program_display, "display_screen_width")
+    uniform_output_sampler = gl.getUniformLocation(program_display, "output_sampler")
+    uniform_render_color = gl.getUniformLocation(program_output, "render_color")
+    uniform_render_position = gl.getUniformLocation(program_output, "render_position")
+    uniform_render_width = gl.getUniformLocation(program_output, "render_width")
+    uniform_render_height = gl.getUniformLocation(program_output, "render_height")
     uniform_color = gl.getUniformLocation(program_compute, "old_color")
     uniform_position = gl.getUniformLocation(program_compute, "old_position")
     uniform_delta_time = gl.getUniformLocation(program_compute, "delta_time")
+    uniform_reference = gl.getUniformLocation(program_compute, "reference")
 
     //prepare textures
     page_breaker_init_data_textures(pixel_data)
@@ -273,6 +325,10 @@ function page_breaker_init_gl(canvas, pixel_data) {
     gl.bindTexture(gl.TEXTURE_2D, position_textures[0])
     gl.activeTexture(gl.TEXTURE3)
     gl.bindTexture(gl.TEXTURE_2D, position_textures[1])
+    gl.activeTexture(gl.TEXTURE4)
+    gl.bindTexture(gl.TEXTURE_2D, output_color_texture)
+    gl.activeTexture(gl.TEXTURE5)
+    gl.bindTexture(gl.TEXTURE_2D, reference_texture)
 }
 
 function page_breaker_update(time) {
@@ -286,22 +342,34 @@ function page_breaker_update(time) {
     gl.useProgram(program_compute)
     gl.uniform1i(uniform_color, old_state)
     gl.uniform1i(uniform_position, old_state + 2)
+    gl.uniform1i(uniform_reference, 5)
     gl.uniform1f(uniform_delta_time, delta_time)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
-    gl.viewport(0, 0, gl_canvas.width, gl_canvas.height)
-    gl.useProgram(program_display)
+    gl.bindFramebuffer(gl.FRAMEBUFFER, clear_framebuffer)
+    gl.viewport(0, 0, width, height)
+    gl.clear(gl.COLOR_BUFFER_BIT)
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, output_framebuffer)
+    gl.viewport(0, 0, width, height)
+    gl.useProgram(program_output)
     gl.uniform1i(uniform_render_color, new_state)
     gl.uniform1i(uniform_render_position, new_state + 2)
     gl.uniform1f(uniform_render_width, width)
     gl.uniform1f(uniform_render_height, height)
-    gl.uniform1ui(uniform_render_scaling_factor, scaling_factor)
     gl.drawArrays(gl.POINTS, 0, width * height)
 
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null)
+    gl.viewport(0, 0, gl_canvas.width, gl_canvas.height)
+    gl.useProgram(program_display)
+    gl.uniform1i(uniform_output_sampler, 4)
+    gl.uniform1ui(uniform_display_screen_width, width)
+    gl.drawArrays(gl.TRIANGLES, 0, 4)
+    
     swap_states()
 
-    requestAnimationFrame(page_breaker_update)
+    if(running)
+        requestAnimationFrame(page_breaker_update)
 }
 
 function break_page() {
@@ -320,7 +388,7 @@ function break_page() {
 
         //create close button
         var close_button = document.createElement("p")
-        close_button.onclick = () => {overlay.remove()}
+        close_button.onclick = () => {overlay.remove(); running = false; previous_time = -1}
         close_button.innerHTML = "X"
         close_button.style.cursor = "pointer"
         close_button.style.fontFamily = "Arial"
@@ -354,6 +422,8 @@ function break_page() {
         canvas.id="page_breaker_canvas"
         overlay.appendChild(canvas)
         page_breaker_init_gl(canvas, pixel_data)
+        running = true
+        previous_time = -1
         requestAnimationFrame(page_breaker_update)
     })
 
