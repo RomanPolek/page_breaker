@@ -4,7 +4,9 @@ var program_compute = null
 var program_display = null
 var color_textures = [null, null]
 var position_textures = [null, null] //RGBA32F format and contains X,Y, VX, VY
+var reference_texture = null
 var framebuffers = [null, null] //both sets of textures are bound to these
+var reference_framebuffer = null
 var old_state = 0
 var new_state = 1
 var uniform_render_color = -1
@@ -14,9 +16,11 @@ var uniform_render_height = -1
 var uniform_render_scaling_factor = -1
 var uniform_color = -1
 var uniform_position = -1
+var uniform_delta_time = -1
 var scaling_factor = 1 //is a natural number. 1 is maximum quality
 var width = 0
 var height = 0
+var previous_time = -1
 
 function swap_states() {
     var x = old_state
@@ -67,6 +71,10 @@ function page_breaker_load_initial_state(initial_data) {
     gl.bindTexture(gl.TEXTURE_2D, position_textures[new_state])
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_INT, null)
 
+    gl.bindTexture(gl.TEXTURE_2D, reference_texture)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16UI, width, height, 0, gl.RG_INTEGER, gl.UNSIGNED_SHORT, null)
+
+
     gl.bindTexture(gl.TEXTURE_2D, null)
 }
 
@@ -106,7 +114,10 @@ function page_breaker_create_framebuffer(color_texture, position_texture) {
 function page_breaker_init_data_textures(initial_data) {
     color_textures = [page_breaker_create_texture("color"), page_breaker_create_texture("color")]
     position_textures = [page_breaker_create_texture("position"), page_breaker_create_texture("position")]
+    output_color_texture = page_breaker_create_texture("color")
+    reference_texture = page_breaker_create_texture("position")
     framebuffers = [page_breaker_create_framebuffer(color_textures[0], position_textures[0]), page_breaker_create_framebuffer(color_textures[1], position_textures[1])]
+    reference_framebuffer = page_breaker_create_framebuffer(output_color_texture, reference_texture)
 
     page_breaker_load_initial_state(initial_data)
 }
@@ -200,15 +211,43 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'in highp vec2 uv;' +
         'uniform sampler2D old_color;' +
         'uniform highp usampler2D old_position;' +
+        'uniform highp float delta_time;' +
         'layout(location = 0) out highp vec4 new_color;' +
         'layout(location = 1) out highp vec4 new_position;' +
 
-        'const highp float gravity = 2.0 / 60000.0;' +
-
+        'const highp float SCENE_WIDTH = 2000.0;' +
+        'const highp float SCENE_HEIGHT = 2000.0;' +
+        'const highp float GRAVITY = 9.81;' +
+        'const highp float SIDE_COEFFICIENT_OF_RESTITUTION = 0.10;' +
         'void main(void) {' +
+            'highp vec4 world_transformation = vec4(SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH, SCENE_HEIGHT);' +
+
             'new_color = texture(old_color, uv);' +
-            'highp vec4 old_pos = uintBitsToFloat(texture(old_position, uv));' +
-            'new_position = old_pos + vec4(old_pos.z, old_pos.w,0,-gravity);' +
+            'highp vec4 old_pos = uintBitsToFloat(texture(old_position, uv)) * world_transformation;' +
+            
+            'highp vec4 change = vec4(0, 0, 0, -GRAVITY);' +
+
+            'new_position = (old_pos + vec4(old_pos.z, old_pos.w, 0, 0) + change * delta_time);' +
+
+
+            //side collisions
+            'if(new_position.x < 0.0) {' +
+                'new_position.x = -new_position.x;' +
+                'new_position.z *= -SIDE_COEFFICIENT_OF_RESTITUTION;' +
+            '}' +
+            'if(new_position.y < 0.0) {' +
+                'new_position.y = -new_position.y;' +
+                'new_position.w *= -SIDE_COEFFICIENT_OF_RESTITUTION;' +
+            '}' +
+            'if(new_position.x > SCENE_WIDTH) {' +
+                'new_position.x = 2.0 * SCENE_WIDTH - new_position.x;' +
+                'new_position.z *= -SIDE_COEFFICIENT_OF_RESTITUTION;' +
+            '}' +
+            'if(new_position.y > SCENE_WIDTH) {' +
+                'new_position.y = 2.0 * SCENE_WIDTH - new_position.y;' +
+                'new_position.w *= -SIDE_COEFFICIENT_OF_RESTITUTION;' +
+            '}' +
+            'new_position /= world_transformation;' +
         '}'
     )
 
@@ -220,6 +259,7 @@ function page_breaker_init_gl(canvas, pixel_data) {
     uniform_render_scaling_factor = gl.getUniformLocation(program_display, "render_scaling_factor")
     uniform_color = gl.getUniformLocation(program_compute, "old_color")
     uniform_position = gl.getUniformLocation(program_compute, "old_position")
+    uniform_delta_time = gl.getUniformLocation(program_compute, "delta_time")
 
     //prepare textures
     page_breaker_init_data_textures(pixel_data)
@@ -235,13 +275,18 @@ function page_breaker_init_gl(canvas, pixel_data) {
     gl.bindTexture(gl.TEXTURE_2D, position_textures[1])
 }
 
-function page_breaker_update() {
+function page_breaker_update(time) {
+    if(previous_time == -1) previous_time = time
+    var delta_time = (time - previous_time) / 1000
+    previous_time = time
+
     //write uniforms
     gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[new_state])
     gl.viewport(0, 0, width, height)
     gl.useProgram(program_compute)
     gl.uniform1i(uniform_color, old_state)
     gl.uniform1i(uniform_position, old_state + 2)
+    gl.uniform1f(uniform_delta_time, delta_time)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null)
