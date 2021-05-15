@@ -23,6 +23,8 @@ var uniform_delta_time = -1
 var uniform_output_sampler = -1
 var uniform_display_screen_width = -1
 var uniform_reference = -1
+var uniform_width = -1
+var uniform_height = -1
 var scaling_factor = 1 //is a natural number. 1 is maximum quality
 var width = 0
 var height = 0
@@ -154,6 +156,7 @@ function page_breaker_renderer_compilation_log(shader) {
     var compilationLog = gl.getShaderInfoLog(shader);
     if(compilationLog != "") {
         console.log('Shader compiler log: ' + compilationLog);
+        gl = "" //stops the blinking
     }
 }
 
@@ -258,8 +261,8 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'uniform highp usampler2D old_position;' +
         'uniform highp usampler2D reference;' +
         'uniform highp float delta_time;' +
-        'uniform highp float screen_width;' +
-        'uniform highp float screen_height;' +
+        'uniform highp uint width;' +
+        'uniform highp uint height;' +
         'layout(location = 0) out highp vec4 new_color;' +
         'layout(location = 1) out highp vec4 new_position;' +
 
@@ -267,6 +270,7 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'const highp float SCENE_HEIGHT = 2000.0;' +
         'const highp float GRAVITY = 9.81;' +
         'const highp float SIDE_COEFFICIENT_OF_RESTITUTION = 0.10;' +
+        'const highp uint COLLISION_DETECTION_RANGE = 10u;' +
         'void main(void) {' +
             'highp vec4 world_transformation = vec4(SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH, SCENE_HEIGHT);' +
 
@@ -276,6 +280,18 @@ function page_breaker_init_gl(canvas, pixel_data) {
             'old_pos *= world_transformation;' +
             
             'highp vec4 change = vec4(0, 0, 0, -GRAVITY);' +
+
+            //collisions
+            'for(uint y = 0u; y < COLLISION_DETECTION_RANGE; y++) {' +
+                'for(uint x = 0u; x < COLLISION_DETECTION_RANGE; x++) {' +
+                    'highp vec2 coords = old_coordinates + vec2(x - (COLLISION_DETECTION_RANGE >> 1), y - (COLLISION_DETECTION_RANGE >> 1)) / vec2(width, height);' +
+                    'highp vec2 reference_coords = vec2(texture(reference, coords).xy) / 65535.0;' +
+                    'highp vec4 other_position = uintBitsToFloat(texture(old_position, reference_coords)) * world_transformation;' +
+                    'if(distance(other_position.xy, old_pos.xy) > 1200.0) {' +
+                        'change.z = GRAVITY;' +
+                    '}' +
+                '}' +
+            '}' +
 
             'new_position = (old_pos + vec4(old_pos.z, old_pos.w, 0, 0) + change * delta_time);' +
 
@@ -312,7 +328,8 @@ function page_breaker_init_gl(canvas, pixel_data) {
     uniform_position = gl.getUniformLocation(program_compute, "old_position")
     uniform_delta_time = gl.getUniformLocation(program_compute, "delta_time")
     uniform_reference = gl.getUniformLocation(program_compute, "reference")
-
+    uniform_width = gl.getUniformLocation(program_compute, "width")
+    uniform_height = gl.getUniformLocation(program_compute, "height")
     //prepare textures
     page_breaker_init_data_textures(pixel_data)
 
@@ -344,6 +361,8 @@ function page_breaker_update(time) {
     gl.uniform1i(uniform_position, old_state + 2)
     gl.uniform1i(uniform_reference, 5)
     gl.uniform1f(uniform_delta_time, delta_time)
+    gl.uniform1ui(uniform_width, width)
+    gl.uniform1ui(uniform_height, height)
     gl.drawArrays(gl.TRIANGLES, 0, 3)
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, clear_framebuffer)
