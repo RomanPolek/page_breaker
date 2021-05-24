@@ -83,7 +83,7 @@ function page_breaker_load_initial_state(initial_data) {
     gl.bindTexture(gl.TEXTURE_2D, output_color_texture)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
     gl.bindTexture(gl.TEXTURE_2D, reference_texture)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG16UI, width, height, 0, gl.RG_INTEGER, gl.UNSIGNED_SHORT, null)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null)
 
 
     gl.bindTexture(gl.TEXTURE_2D, null)
@@ -236,10 +236,10 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'in highp vec4 color;' +
         'in highp vec2 uv;' +
         'layout(location = 0) out highp vec4 out_color;' +
-        'layout(location = 1) out highp vec2 reference;' +
+        'layout(location = 1) out highp vec4 reference;' +
         'void main(void) {' +
-            'out_color = vec4(color.xyz, 1);' +
-            'reference = uv;' +
+            'out_color = vec4(color.xyz, 1.0);' +
+            'reference = vec4(uv, fract(uv * 256.0));' +
         '}'
     )
 
@@ -259,7 +259,7 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'in highp vec2 uv;' +
         'uniform sampler2D old_color;' +
         'uniform highp usampler2D old_position;' +
-        'uniform highp usampler2D reference;' +
+        'uniform highp sampler2D reference;' +
         'uniform highp float delta_time;' +
         'uniform highp uint width;' +
         'uniform highp uint height;' +
@@ -270,7 +270,9 @@ function page_breaker_init_gl(canvas, pixel_data) {
         'const highp float SCENE_HEIGHT = 2000.0;' +
         'const highp float GRAVITY = 9.81;' +
         'const highp float SIDE_COEFFICIENT_OF_RESTITUTION = 0.10;' +
-        'const highp uint COLLISION_DETECTION_RANGE = 10u;' +
+        'const highp int COLLISION_DETECTION_RANGE = 5;' +
+        'const highp float COLLISION_REPEL_RADIUS = 2.0;' +
+        'const highp float COLLISION_REPEL_STRENGTH = 1.0;' +
         'void main(void) {' +
             'highp vec4 world_transformation = vec4(SCENE_WIDTH, SCENE_HEIGHT, SCENE_WIDTH, SCENE_HEIGHT);' +
 
@@ -279,16 +281,21 @@ function page_breaker_init_gl(canvas, pixel_data) {
             'highp vec2 old_coordinates = old_pos.xy;' +
             'old_pos *= world_transformation;' +
             
-            'highp vec4 change = vec4(0, 0, 0, -GRAVITY);' +
+            'highp vec4 change = vec4(0, 0, 0, -GRAVITY*0.0);' +
 
             //collisions
-            'for(uint y = 0u; y < COLLISION_DETECTION_RANGE; y++) {' +
-                'for(uint x = 0u; x < COLLISION_DETECTION_RANGE; x++) {' +
-                    'highp vec2 coords = old_coordinates + vec2(x - (COLLISION_DETECTION_RANGE >> 1), y - (COLLISION_DETECTION_RANGE >> 1)) / vec2(width, height);' +
-                    'highp vec2 reference_coords = vec2(texture(reference, coords).xy) / 65535.0;' +
-                    'highp vec4 other_position = uintBitsToFloat(texture(old_position, reference_coords)) * world_transformation;' +
-                    'if(distance(other_position.xy, old_pos.xy) > 1200.0) {' +
-                        'change.z = GRAVITY;' +
+            'for(int y = -COLLISION_DETECTION_RANGE; y <= COLLISION_DETECTION_RANGE; y++) {' +
+                'for(int x = -COLLISION_DETECTION_RANGE; x <= COLLISION_DETECTION_RANGE; x++) {' +
+                    'if(!(x==0 && y == 0)) {' +
+                        'highp vec2 coords = old_coordinates + vec2(x, y) / vec2(width, height);' +
+                        'highp vec4 raw_reference = texture(reference, coords);' +
+                        'highp vec2 reference_coords = raw_reference.xy + raw_reference.zw / 256.0;' +
+                        'highp vec4 other_position = uintBitsToFloat(texture(old_position, reference_coords)) * world_transformation;' +
+                        'highp vec2 direction_vector = other_position.xy - old_pos.xy;' +
+                        'highp float point_distance = length(direction_vector);' +
+                        'if(point_distance <= COLLISION_REPEL_RADIUS) {' +
+                            'change.zw += -1.0 * direction_vector * COLLISION_REPEL_STRENGTH;' +
+                        '}' +
                     '}' +
                 '}' +
             '}' +
